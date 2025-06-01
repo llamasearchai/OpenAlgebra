@@ -1,0 +1,13 @@
+title = "Medical AI Secrets Detection"
+
+[[rules]]
+description = "AWS Access Key"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+
+[[rules]]
+description = "API Keys"
+regex = '''(?i)(api|token|key|secret)[_-]?key'''
+
+[[rules]]
+description = "Database Credentials"
+regex = '''(?i)(db|database)[_-]?(user|name|pass|pw)''' 

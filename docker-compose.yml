@@ -1,0 +1,327 @@
+version: '3.8'
+
+# OpenAlgebra Medical AI Deployment Stack
+# Complete production-ready medical AI infrastructure
+
+services:
+  # Main OpenAlgebra Medical AI Service
+  openalgebra-medical:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: openalgebra-medical-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    volumes:
+      # Medical data volumes
+      - ./data/dicom:/app/data/dicom:ro
+      - ./data/nifti:/app/data/nifti:ro
+      - ./models:/app/models:ro
+      - ./results:/app/results:rw
+      # Configuration
+      - ./config:/app/config:ro
+      # Logs
+      - openalgebra-logs:/app/logs
+    environment:
+      # OpenAlgebra configuration
+      - OPENALGEBRA_LOG_LEVEL=INFO
+      - OPENALGEBRA_ENABLE_GPU=true
+      - OPENALGEBRA_CUDA_DEVICE=0
+      - OPENALGEBRA_NUM_THREADS=8
+      
+      # Medical AI configuration
+      - MEDICAL_AI_MODEL_PATH=/app/models
+      - MEDICAL_DATA_PATH=/app/data
+      - MEDICAL_RESULTS_PATH=/app/results
+      - MEDICAL_CACHE_SIZE=2048
+      
+      # API configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_WORKERS=4
+      - API_MAX_REQUEST_SIZE=100MB
+      
+      # Security and compliance
+      - HIPAA_COMPLIANCE=true
+      - ANONYMIZE_PATIENT_DATA=true
+      - AUDIT_LOGGING=true
+      
+      # Database configuration
+      - DATABASE_URL=postgresql://openalgebra:medical_secure_pass@postgres:5432/medical_ai
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Monitoring
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENABLED=true
+    depends_on:
+      - postgres
+      - redis
+      - prometheus
+    networks:
+      - medical-ai-network
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 16G
+        reservations:
+          cpus: '4.0'
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # PostgreSQL database for medical metadata and audit trails
+  postgres:
+    image: postgres:15-alpine
+    container_name: openalgebra-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=medical_ai
+      - POSTGRES_USER=openalgebra
+      - POSTGRES_PASSWORD=medical_secure_pass
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - medical-ai-network
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openalgebra -d medical_ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: openalgebra-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./config/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - medical-ai-network
+    command: redis-server /etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: openalgebra-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - medical-ai-network
+
+  # Grafana for visualization and monitoring
+  grafana:
+    image: grafana/grafana:latest
+    container_name: openalgebra-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=medical_admin_pass
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    depends_on:
+      - prometheus
+    networks:
+      - medical-ai-network
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: openalgebra-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - medical-ai-network
+
+  # MinIO for medical data storage
+  minio:
+    image: minio/minio:latest
+    container_name: openalgebra-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=openalgebra
+      - MINIO_ROOT_PASSWORD=medical_storage_pass
+      - MINIO_BROWSER_REDIRECT_URL=http://localhost:9001
+    command: server /data --console-address ":9001"
+    networks:
+      - medical-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx reverse proxy for load balancing
+  nginx:
+    image: nginx:alpine
+    container_name: openalgebra-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - openalgebra-medical
+    networks:
+      - medical-ai-network
+
+  # Medical DICOM PACS simulator (for testing)
+  orthanc:
+    image: osimis/orthanc:latest
+    container_name: openalgebra-orthanc
+    restart: unless-stopped
+    ports:
+      - "4242:4242"  # DICOM port
+      - "8042:8042"  # HTTP port
+    volumes:
+      - orthanc-data:/var/lib/orthanc/db
+      - ./orthanc/orthanc.json:/etc/orthanc/orthanc.json:ro
+    environment:
+      - ORTHANC_NAME=OpenAlgebra-PACS
+    networks:
+      - medical-ai-network
+
+  # Medical AI model training service (optional)
+  training-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.medical
+      target: training
+    container_name: openalgebra-training
+    restart: "no"  # Only run when needed
+    volumes:
+      - ./data/training:/app/data/training:ro
+      - ./models:/app/models:rw
+      - ./training-logs:/app/logs:rw
+    environment:
+      - TRAINING_DATA_PATH=/app/data/training
+      - MODEL_OUTPUT_PATH=/app/models
+      - TRAINING_LOG_LEVEL=DEBUG
+      - CUDA_VISIBLE_DEVICES=0
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - medical-ai-network
+    deploy:
+      resources:
+        limits:
+          cpus: '16.0'
+          memory: 32G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - training
+
+  # Backup service for medical data
+  backup-service:
+    image: alpine:latest
+    container_name: openalgebra-backup
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/backup/postgres:ro
+      - minio-data:/backup/minio:ro
+      - orthanc-data:/backup/orthanc:ro
+      - ./backups:/backups:rw
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *  # Daily at 2 AM
+      - RETENTION_DAYS=30
+    command: >
+      sh -c "
+      echo '0 2 * * * tar -czf /backups/medical-backup-$(date +%Y%m%d).tar.gz /backup' | crontab - &&
+      crond -f
+      "
+    networks:
+      - medical-ai-network
+
+# Named volumes for persistent data
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  minio-data:
+    driver: local
+  orthanc-data:
+    driver: local
+  openalgebra-logs:
+    driver: local
+  nginx-logs:
+    driver: local
+
+# Custom network for medical AI services
+networks:
+  medical-ai-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Development override (docker-compose.override.yml)
+# This file should contain development-specific overrides 

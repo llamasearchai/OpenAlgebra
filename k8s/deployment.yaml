@@ -1,0 +1,152 @@
+# Kubernetes deployment for production scalability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-inference-platform
+  namespace: ai-prod
+  labels:
+    app: ai-inference-platform
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-inference-platform
+  template:
+    metadata:
+      labels:
+        app: ai-inference-platform
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: ai-inference-platform
+        image: ai-inference-platform:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: GPU_MEMORY_FRACTION
+          value: "0.8"
+        - name: MAX_BATCH_SIZE
+          value: "32"
+        - name: POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: url
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            memory: "16Gi"
+            cpu: "4"
+          requests:
+            nvidia.com/gpu: 1
+            memory: "8Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/models
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache-pvc
+      - name: config
+        configMap:
+          name: ai-platform-config
+      nodeSelector:
+        accelerator: nvidia-tesla-v100
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-inference-service
+  namespace: ai-prod
+  labels:
+    app: ai-inference-platform
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: ai-inference-platform
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-inference-hpa
+  namespace: ai-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-inference-platform
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: inference_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"

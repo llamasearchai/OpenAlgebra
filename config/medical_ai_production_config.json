@@ -1,0 +1,198 @@
+{
+  "test_environments": {
+    "development": {
+      "base_url": "http://localhost:8080",
+      "max_users": 10,
+      "duration": 300
+    },
+    "staging": {
+      "base_url": "https://staging-api.medical-ai.com",
+      "max_users": 50,
+      "duration": 1800
+    },
+    "production": {
+      "base_url": "https://api.medical-ai.com",
+      "max_users": 200,
+      "duration": 3600
+    }
+  },
+  "clinical_models": {
+    "imaging_classification": {
+      "chest_xray": {
+        "endpoint": "/v1/imaging/chest-xray/classify",
+        "min_accuracy": 0.95,
+        "max_latency_ms": 2000,
+        "test_images": [
+          "chest_normal_001.jpg",
+          "chest_pneumonia_001.jpg",
+          "chest_covid_001.jpg"
+        ]
+      },
+      "ct_head": {
+        "endpoint": "/v1/imaging/ct-head/analyze",
+        "min_accuracy": 0.92,
+        "max_latency_ms": 3000,
+        "test_images": [
+          "ct_head_normal_001.dcm",
+          "ct_head_stroke_001.dcm",
+          "ct_head_hemorrhage_001.dcm"
+        ]
+      },
+      "mri_brain": {
+        "endpoint": "/v1/imaging/mri-brain/segment",
+        "min_accuracy": 0.90,
+        "max_latency_ms": 5000,
+        "test_images": [
+          "mri_brain_normal_001.nii.gz",
+          "mri_brain_tumor_001.nii.gz"
+        ]
+      }
+    },
+    "clinical_nlp": {
+      "discharge_summary": {
+        "endpoint": "/v1/nlp/discharge-summary/extract",
+        "min_accuracy": 0.88,
+        "max_latency_ms": 1500,
+        "test_notes": [
+          "discharge_cardiology_001.txt",
+          "discharge_surgery_001.txt",
+          "discharge_internal_med_001.txt"
+        ]
+      },
+      "radiology_report": {
+        "endpoint": "/v1/nlp/radiology-report/classify",
+        "min_accuracy": 0.90,
+        "max_latency_ms": 1000,
+        "test_notes": [
+          "rad_report_chest_001.txt",
+          "rad_report_abdomen_001.txt",
+          "rad_report_brain_001.txt"
+        ]
+      }
+    },
+    "multimodal_analysis": {
+      "clinical_decision_support": {
+        "endpoint": "/v1/multimodal/clinical-decision",
+        "min_accuracy": 0.85,
+        "max_latency_ms": 4000,
+        "test_cases": [
+          {
+            "images": ["chest_xray_001.jpg"],
+            "notes": ["clinical_note_001.txt"],
+            "labs": {"wbc": 12000, "crp": 45}
+          }
+        ]
+      }
+    }
+  },
+  "compliance_requirements": {
+    "hipaa": {
+      "encryption_at_rest": true,
+      "encryption_in_transit": true,
+      "audit_logging": true,
+      "access_controls": true,
+      "data_minimization": true,
+      "breach_notification": true
+    },
+    "fda_requirements": {
+      "software_validation": true,
+      "risk_management": true,
+      "clinical_evaluation": true,
+      "post_market_surveillance": true
+    },
+    "gdpr": {
+      "data_protection": true,
+      "right_to_erasure": true,
+      "data_portability": true,
+      "consent_management": true
+    }
+  },
+  "emergency_scenarios": {
+    "stroke_detection": {
+      "max_latency_ms": 2000,
+      "min_accuracy": 0.95,
+      "models": ["ct_head", "clinical_decision_support"],
+      "priority": "critical"
+    },
+    "heart_attack_diagnosis": {
+      "max_latency_ms": 1500,
+      "min_accuracy": 0.93,
+      "models": ["chest_xray", "clinical_nlp"],
+      "priority": "critical"
+    },
+    "sepsis_prediction": {
+      "max_latency_ms": 3000,
+      "min_accuracy": 0.88,
+      "models": ["clinical_decision_support"],
+      "priority": "high"
+    }
+  },
+  "load_patterns": {
+    "normal_clinical_hours": {
+      "users_per_hour": [5, 8, 12, 15, 20, 25, 30, 35, 40, 35, 30, 25],
+      "think_time_seconds": [10, 30],
+      "session_duration_minutes": [15, 45]
+    },
+    "emergency_surge": {
+      "users_per_hour": [50, 75, 100, 120, 100, 75],
+      "think_time_seconds": [1, 5],
+      "session_duration_minutes": [5, 15]
+    },
+    "research_batch": {
+      "users_per_hour": [10, 10, 10, 10, 10, 10, 10, 10],
+      "think_time_seconds": [60, 300],
+      "session_duration_minutes": [120, 480]
+    }
+  },
+  "version": "1.0.0",
+  "environment": "production",
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "workers": 4,
+    "timeout": 300,
+    "keepalive": 120
+  },
+  "database": {
+    "connection_pool_size": 20,
+    "max_overflow": 50,
+    "pool_timeout": 30,
+    "pool_recycle": 3600
+  },
+  "models": {
+    "cache_size": "2GB",
+    "batch_size": 32,
+    "max_sequence_length": 512,
+    "inference_timeout": 30
+  },
+  "resources": {
+    "cpu": 4,
+    "memory": "8Gi",
+    "gpu_memory": "4Gi"
+  },
+  "security": {
+    "encryption_enabled": true,
+    "audit_logging": true,
+    "rate_limiting": true,
+    "max_requests_per_minute": 1000
+  },
+  "compliance": {
+    "hipaa_enabled": true,
+    "gdpr_enabled": true,
+    "audit_retention_days": 2555,
+    "data_encryption": "AES-256"
+  },
+  "monitoring": {
+    "metrics_enabled": true,
+    "health_check_interval": 30,
+    "log_level": "INFO",
+    "alerting_enabled": true
+  },
+  "medical_features": {
+    "dicom_processing": true,
+    "nlp_processing": true,
+    "image_analysis": true,
+    "federated_learning": true,
+    "clinical_decision_support": true
+  }
+}

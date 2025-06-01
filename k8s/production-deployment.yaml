@@ -1,0 +1,229 @@
+# Production Kubernetes deployment with high availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-inference-platform
+  namespace: ai-platform
+  labels:
+    app: ai-inference-platform
+    version: v1.0.0
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: ai-inference-platform
+  template:
+    metadata:
+      labels:
+        app: ai-inference-platform
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-inference-platform
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ai-inference-platform
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - gpu-node
+      containers:
+      - name: ai-inference-platform
+        image: ai-inference-platform:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-platform-secrets
+              key: database-url
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-platform-secrets
+              key: jwt-secret
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ai-platform-config
+              key: redis-url
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "2000m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "16Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: 1
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-storage-pvc
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: tls-certs
+        secret:
+          secretName: tls-certificates
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-inference-platform-service
+  namespace: ai-platform
+  labels:
+    app: ai-inference-platform
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
+  selector:
+    app: ai-inference-platform
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-inference-platform-ingress
+  namespace: ai-platform
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  tls:
+  - hosts:
+    - api.ai-platform.company.com
+    secretName: ai-platform-tls
+  rules:
+  - host: api.ai-platform.company.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ai-inference-platform-service
+            port:
+              number: 80
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-inference-platform-hpa
+  namespace: ai-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai-inference-platform
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: inference_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "50"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 180

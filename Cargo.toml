@@ -1,0 +1,55 @@
+[package]
+name = "openalgebra-medical"
+version = "1.0.0"
+edition = "2021"
+authors = ["Nik Jois <nikjois@llamasearch.ai>"]
+description = "High-Performance Sparse Linear Algebra for Medical AI Model Development"
+license = "MIT"
+repository = "https://github.com/llamasearchai/OpenAlgebra"
+homepage = "https://github.com/llamasearchai/OpenAlgebra"
+documentation = "https://docs.rs/openalgebra-medical"
+readme = "README.md"
+keywords = ["medical-ai", "sparse-matrix", "dicom", "machine-learning", "healthcare"]
+categories = ["science", "mathematics"]
+exclude = [
+    "tests/*",
+    "examples/*",
+    ".github/*",
+    "docs/*",
+    "scripts/*",
+    "backup/*"
+]
+
+[lib]
+name = "openalgebra_medical"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+
+[features]
+default = []
+medical-io = []
+gpu-acceleration = []
+clinical-validation = []
+federated-learning = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+debug = true
+
+# macOS specific optimizations
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+core-graphics = "0.23"
+cocoa = "0.25"
+objc = "0.2" 

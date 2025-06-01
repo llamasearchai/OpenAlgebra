@@ -1,0 +1,87 @@
+# Production configuration with advanced optimization settings
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 8
+max_connections = 1000
+keep_alive_timeout = 75
+request_timeout = 300
+
+[inference]
+max_batch_size = 64
+default_batch_size = 16
+batch_timeout_ms = 50
+max_sequence_length = 4096
+enable_kv_cache = true
+kv_cache_size_gb = 8
+enable_speculative_decoding = true
+
+[model]
+# Model loading and optimization
+model_parallel_size = 4
+tensor_parallel_size = 2
+pipeline_parallel_size = 2
+precision = "fp16"
+quantization = "int8"
+enable_flash_attention = true
+max_models_in_memory = 3
+
+[gpu]
+memory_fraction = 0.9
+enable_memory_pooling = true
+enable_graph_mode = true
+enable_tensor_cores = true
+allow_growth = false
+
+[caching]
+# Redis configuration for distributed caching
+redis_url = "redis://redis-cluster:6379"
+cache_ttl_seconds = 3600
+enable_response_caching = true
+cache_compression = "gzip"
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+enable_distributed_tracing = true
+trace_sampling_rate = 0.1
+log_level = "info"
+enable_performance_profiling = false
+
+[security]
+enable_auth = true
+jwt_secret_key = "${JWT_SECRET_KEY}"
+rate_limit_requests_per_minute = 1000
+enable_cors = true
+allowed_origins = ["https://api.company.com", "https://dashboard.company.com"]
+enable_tls = true
+cert_file = "/etc/ssl/certs/server.crt"
+key_file = "/etc/ssl/private/server.key"
+
+[database]
+url = "${DATABASE_URL}"
+max_connections = 20
+min_connections = 5
+connection_timeout = 30
+query_timeout = 60
+enable_connection_pooling = true
+
+[storage]
+# Model and data storage configuration
+model_storage_path = "/app/models"
+cache_storage_path = "/app/cache"
+log_storage_path = "/app/logs"
+max_storage_gb = 500
+enable_compression = true
+backup_enabled = true
+backup_schedule = "0 2 * * *"  # Daily at 2 AM
+
+[scaling]
+# Auto-scaling configuration
+enable_auto_scaling = true
+min_replicas = 2
+max_replicas = 20
+target_cpu_utilization = 70
+target_memory_utilization = 80
+scale_up_threshold = 5  # minutes
+scale_down_threshold = 10  # minutes

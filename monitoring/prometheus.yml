@@ -1,0 +1,64 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Load rules files
+rule_files:
+  - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # OpenAlgebra main service
+  - job_name: 'openalgebra'
+    static_configs:
+      - targets: ['openalgebra:8000']
+    metrics_path: '/metrics'
+    
+  # GPU monitoring
+  - job_name: 'gpu-metrics'
+    static_configs:
+      - targets: ['openalgebra-gpu:8001']
+    metrics_path: '/gpu-metrics'
+    
+  # Node exporter for system metrics
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    
+  # PostgreSQL exporter
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    
+  # Redis exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    
+  # Medical AI specific metrics
+  - job_name: 'medical-ai-metrics'
+    static_configs:
+      - targets: ['openalgebra:8000']
+    metrics_path: '/api/v1/medical-metrics'
+    params:
+      include_clinical: ['true']
+      include_performance: ['true']
+    
+  - job_name: 'medical-load-test'
+    static_configs:
+      - targets: ['medical-load-test:8090']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  - job_name: 'medical-ai-api'
+    static_configs:
+      - targets: ['medical-ai-api:8080']
+    scrape_interval: 10s
+    metrics_path: /metrics

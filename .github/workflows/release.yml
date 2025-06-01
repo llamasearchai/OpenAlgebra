@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract version
+        id: extract_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: OpenAlgebra Medical AI ${{ steps.extract_version.outputs.version }}
+          body: |
+            # OpenAlgebra Medical AI Release ${{ steps.extract_version.outputs.version }}
+            
+            ## Features
+            - Advanced sparse linear algebra for medical AI
+            - DICOM processing and medical imaging support
+            - GPU-accelerated inference
+            - HIPAA-compliant data processing
+            - Clinical validation framework
+            
+            ## Installation
+            ```bash
+            cargo install openalgebra-medical --version ${{ steps.extract_version.outputs.version }}
+            ```
+            
+            ## Docker
+            ```bash
+            docker pull ghcr.io/openalgebra/medical-ai:${{ steps.extract_version.outputs.version }}
+            ```
+          draft: false
+          prerelease: false
+
+  build-binaries:
+    name: Build Release Binaries
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: openalgebra-medical-linux-amd64
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: openalgebra-medical-linux-arm64
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: openalgebra-medical-darwin-amd64
+            cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: openalgebra-medical-darwin-arm64
+            cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: openalgebra-medical-windows-amd64.exe
+            cross: false
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --bin openalgebra-medical-cli
+          else
+            cargo build --release --target ${{ matrix.target }} --bin openalgebra-medical-cli
+          fi
+      
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/openalgebra-medical-cli.exe ${{ matrix.artifact_name }}
+          else
+            cp target/${{ matrix.target }}/release/openalgebra-medical-cli ${{ matrix.artifact_name }}
+          fi
+      
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.artifact_name }}
+          asset_content_type: application/octet-stream
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Validate package
+        run: cargo package --allow-dirty
+      
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cargo publish --token $CARGO_REGISTRY_TOKEN --no-verify
+
+  docker-release:
+    name: Build and Push Release Docker Images
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract version
+        id: extract_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Build and push multi-platform images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/openalgebra/medical-ai:${{ steps.extract_version.outputs.version }}
+            ghcr.io/openalgebra/medical-ai:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  medical-validation-release:
+    name: Medical Validation for Release
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Run comprehensive medical validation
+        run: |
+          cargo test --release --features medical_validation
+          cargo test --release --features clinical_validation
+          cargo test --release --features fda_validation
+      
+      - name: Generate release validation report
+        run: |
+          mkdir -p release-validation
+          cargo run --release --bin medical-validator -- --comprehensive > release-validation/comprehensive-validation-report.txt
+          cargo run --release --bin clinical-metrics -- --summary > release-validation/clinical-metrics-summary.txt
+      
+      - name: Upload validation artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-validation-${{ github.ref_name }}
+          path: release-validation/
+
+  notify:
+    name: Notify Release
+    needs: [publish-crates, docker-release, medical-validation-release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: extract_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Notify team
+        run: |
+          echo "Release ${{ steps.extract_version.outputs.version }} has been successfully published!"
+          echo "- Binaries uploaded to GitHub Releases"
+          echo "- Crate published to crates.io"
+          echo "- Docker images pushed to ghcr.io"
+          echo "- Medical validation completed" 

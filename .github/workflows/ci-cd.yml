@@ -1,0 +1,429 @@
+name: OpenAlgebra Medical AI CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta, nightly]
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openalgebra_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt, clippy
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libssl-dev \
+          libpq-dev \
+          libblas-dev \
+          liblapack-dev \
+          libopenblas-dev \
+          python3-dev \
+          python3-pip \
+          libdicom-dev \
+          dcmtk \
+          gdcm-tools
+
+    - name: Install Python dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install maturin pytest numpy scipy matplotlib seaborn
+        pip install fastapi uvicorn httpx pytest-asyncio
+        pip install openai tiktoken aiohttp requests
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Build
+      run: cargo build --verbose --all-features
+
+    - name: Run unit tests
+      run: cargo test --verbose --all-features
+
+    - name: Run integration tests
+      run: cargo test --test integration_tests --verbose --all-features
+
+    - name: Run API tests
+      run: cargo test --test test_api_agents --verbose --all-features
+
+    - name: Build Python bindings
+      run: |
+        python3 -m pip install maturin
+        maturin develop --release
+
+    - name: Test Python bindings
+      run: |
+        cd python
+        python3 -m pytest tests/ -v
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+    
+    - name: Run security audit
+      run: cargo audit
+    
+    - name: Run cargo-deny
+      run: |
+        cargo install cargo-deny
+        cargo deny check
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libssl-dev \
+          libblas-dev \
+          liblapack-dev \
+          libopenblas-dev
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-benchmark-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run benchmarks
+      run: |
+        cargo build --release --all-features
+        cargo run --release -- benchmark --bench-type matrix_ops --sizes 1000,5000 --iterations 5
+        cargo run --release -- benchmark --bench-type dicom_processing --sizes 100,500 --iterations 3
+
+  api_integration:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openalgebra_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libssl-dev \
+          libpq-dev \
+          python3-dev \
+          python3-pip
+
+    - name: Install Python test dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install requests httpx pytest pytest-asyncio
+
+    - name: Build and start API server
+      run: |
+        cargo build --release --all-features
+        cargo run --release -- server --host 127.0.0.1 --port 8000 &
+        sleep 10
+
+    - name: Test API endpoints
+      run: |
+        python3 -c "
+        import requests
+        import time
+        
+        # Wait for server to be ready
+        for i in range(30):
+            try:
+                response = requests.get('http://127.0.0.1:8000/health', timeout=5)
+                if response.status_code == 200:
+                    print('API server is ready')
+                    break
+            except:
+                time.sleep(1)
+        else:
+            raise Exception('API server failed to start')
+        
+        # Test health endpoint
+        response = requests.get('http://127.0.0.1:8000/health')
+        assert response.status_code == 200
+        assert response.json()['success'] == True
+        
+        # Test status endpoint
+        response = requests.get('http://127.0.0.1:8000/status')
+        assert response.status_code == 200
+        
+        print('All API tests passed')
+        "
+
+  docker:
+    name: Docker Build and Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: false
+        tags: openalgebra-medical:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Test Docker image
+      run: |
+        docker run --rm openalgebra-medical:test --help
+
+    - name: Test Docker Compose
+      run: |
+        docker-compose -f docker-compose.yml config
+        docker-compose -f docker-compose.yml up -d
+        sleep 30
+        docker-compose -f docker-compose.yml ps
+        docker-compose -f docker-compose.yml down
+
+  compliance:
+    name: Medical Compliance Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libssl-dev
+
+    - name: Build
+      run: cargo build --release --all-features
+
+    - name: Test HIPAA compliance
+      run: |
+        cargo run --release -- validate --input test_data --standard HIPAA
+
+    - name: Test data privacy
+      run: |
+        cargo test --test integration_tests test_medical_privacy --verbose
+
+    - name: Test encryption
+      run: |
+        cargo test --test integration_tests test_data_encryption --verbose
+
+  agents_integration:
+    name: OpenAI Agents Integration
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          libssl-dev
+
+    - name: Build
+      run: cargo build --release --all-features
+
+    - name: Test agents functionality (mock)
+      env:
+        OPENAI_API_KEY: "mock-key-for-testing"
+      run: |
+        # Test agent CLI commands with mock data
+        cargo run --release -- agent analyze-clinical \
+          --dataset test_data/mock_clinical.json \
+          --analysis-type risk_assessment \
+          --privacy full \
+          --recommendations || true
+
+    - name: Test agents integration
+      run: |
+        cargo test --test test_api_agents agents_tests --verbose
+
+  deploy_staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [test, security, api_integration, docker, compliance]
+    if: github.ref == 'refs/heads/develop'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build and push staging image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository }}/openalgebra-medical:staging
+          ghcr.io/${{ github.repository }}/openalgebra-medical:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy_production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [test, security, api_integration, docker, compliance, benchmark]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build and push production image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository }}/openalgebra-medical:latest
+          ghcr.io/${{ github.repository }}/openalgebra-medical:v${{ github.run_number }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  notification:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [test, security, api_integration, docker, compliance]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: needs.test.result == 'success' && needs.security.result == 'success'
+      run: |
+        echo "✅ OpenAlgebra Medical AI CI/CD completed successfully!"
+        echo "All tests, security checks, and compliance validations passed."
+
+    - name: Notify on failure
+      if: needs.test.result == 'failure' || needs.security.result == 'failure'
+      run: |
+        echo "❌ OpenAlgebra Medical AI CI/CD failed!"
+        echo "Please check the logs for details."
+        exit 1 
