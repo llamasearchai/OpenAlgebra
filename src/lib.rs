@@ -1,64 +1,58 @@
 /*!
-# OpenAlgebra Medical AI
+# OpenAlgebra: High-Performance Sparse Linear Algebra Library
 
-High-Performance Sparse Linear Algebra for Medical AI Model Development.
-
-OpenAlgebra is a C++ library with Rust bindings designed for high-performance sparse linear algebra computations
-in medical AI model development. It provides GPU-accelerated sparse matrix operations, advanced iterative solvers,
-and medical imaging processing capabilities.
+OpenAlgebra is a high-performance sparse linear algebra library written in Rust and C++. 
+It provides efficient sparse matrix operations, iterative solvers, and tensor computations 
+with optional GPU acceleration.
 
 ## Features
 
-- **DICOM Processing**: Complete DICOM file handling with anonymization
-- **Sparse Tensors**: GPU-accelerated sparse medical tensor operations  
-- **Medical Models**: SparseCNN for medical image segmentation
-- **Federated Learning**: Privacy-preserving multi-institutional training
-- **Clinical Validation**: Medical accuracy metrics and validation frameworks
-- **Real-time Processing**: Sub-second medical inference capabilities
+### Core Linear Algebra
+- **Sparse Matrix Operations**: COO, CSR, and CSC matrix formats
+- **Iterative Solvers**: Conjugate Gradient, GMRES, BiCGSTAB
+- **Direct Solvers**: Multifrontal and supernodal factorization
+- **Preconditioners**: AMG, ILU, and custom preconditioners
+- **Tensor Operations**: Sparse tensor computations and manipulations
+
+### Performance Optimization
+- **GPU Acceleration**: CUDA support for accelerated computations
+- **Parallel Processing**: OpenMP and MPI support for distributed computing
+- **Memory Efficiency**: Optimized memory layouts for sparse data structures
+- **Hardware Adaptation**: CPU-specific optimizations and vectorization
 
 ## Quick Start
 
 ```rust
-use openalgebra_medical::{DicomProcessor, MedicalTensor, SparseCNN};
+use openalgebra::sparse::{SparseMatrix, COOMatrix};
+use openalgebra::solvers::IterativeSolver;
 
-// Process DICOM files
-let processor = DicomProcessor::new();
-let tensor_data = processor.process_dicom_series("/path/to/dicom").unwrap();
-
-// Create sparse medical tensor from test data
-let dense_data = vec![0.1, 0.0, 0.5, 0.0, 0.8, 0.0];
-let shape = vec![2, 3];
-let sparse_tensor = MedicalTensor::from_dense(&dense_data, shape, 0.3).unwrap();
-
-// Initialize medical AI model
-let model = SparseCNN::new()
-    .anatomy("brain")
-    .task("tumor_segmentation")
-    .build().unwrap();
-```
-
-## Medical Applications
-
-- Brain tumor segmentation (512×512×155 in 245ms, 94.2% Dice)
-- Chest X-ray classification (2048×2048 in 89ms, 96.8% AUC)
-- CT reconstruction (512×512×300 in 1.2s, <2% RMSE)
-- Multi-modal fusion (4×256×256×64 in 167ms, 91.5% F1)
-- Real-time segmentation (256×256×64 in 67ms, 89.7% Dice)
-
-## Installation
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-openalgebra-medical = "1.0.0"
-```
-
-For GPU acceleration:
-
-```toml
-[dependencies]
-openalgebra-medical = { version = "1.0.0", features = ["gpu-acceleration"] }
+fn main() {
+    // Create a sparse matrix in COO format
+    let mut matrix = COOMatrix::<f64>::new(1000, 1000);
+    
+    // Add non-zero elements
+    for i in 0..1000 {
+        matrix.insert(i, i, 2.0);
+        if i > 0 {
+            matrix.insert(i, i-1, -1.0);
+        }
+        if i < 999 {
+            matrix.insert(i, i+1, -1.0);
+        }
+    }
+    
+    // Convert to CSR format for efficient operations
+    let csr_matrix = matrix.to_csr();
+    
+    // Solve linear system Ax = b
+    let b = vec![1.0; 1000];
+    let mut x = vec![0.0; 1000];
+    
+    let solver = openalgebra::solvers::ConjugateGradient::new();
+    solver.solve(&csr_matrix, &b, &mut x);
+    
+    println!("Solution computed successfully");
+}
 ```
 
 ## License
@@ -66,15 +60,23 @@ openalgebra-medical = { version = "1.0.0", features = ["gpu-acceleration"] }
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 */
 
-pub mod dicom;
+pub mod sparse;
+pub mod solvers;
 pub mod tensor;
-pub mod models;
-pub mod validation;
+pub mod preconditioners;
+pub mod utils;
+pub mod api;
+pub mod agents;
 
-pub use dicom::DicomProcessor;
-pub use tensor::MedicalTensor;
-pub use models::SparseCNN;
-pub use validation::ClinicalMetrics;
+#[cfg(feature = "gpu-acceleration")]
+pub mod cuda;
+
+#[cfg(feature = "mpi")]
+pub mod distributed;
+
+pub use sparse::{SparseMatrix, COOMatrix, CSRMatrix, CSCMatrix};
+pub use solvers::{IterativeSolver, ConjugateGradient, GMRES, BiCGSTAB};
+pub use tensor::{SparseTensor, DenseTensor};
 
 /// Main result type for the library
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -82,12 +84,61 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Initialize the OpenAlgebra Medical AI library
+/// Error types for OpenAlgebra
+#[derive(Debug, thiserror::Error)]
+pub enum OpenAlgebraError {
+    #[error("Matrix dimension mismatch: expected {expected}, got {actual}")]
+    DimensionMismatch { expected: String, actual: String },
+    
+    #[error("Solver convergence failed after {iterations} iterations")]
+    ConvergenceFailure { iterations: usize },
+    
+    #[error("Invalid matrix format: {0}")]
+    InvalidFormat(String),
+    
+    #[error("GPU operation failed: {0}")]
+    #[cfg(feature = "gpu-acceleration")]
+    GpuError(String),
+    
+    #[error("MPI operation failed: {0}")]
+    #[cfg(feature = "mpi")]
+    MpiError(String),
+    
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+/// Initialize the OpenAlgebra library
 pub fn init() -> Result<()> {
-    // Initialize logging and GPU resources
-    // tracing_subscriber::fmt::init(); // Commented out for simplified build
-    println!("OpenAlgebra Medical AI v{} initialized", VERSION);
+    #[cfg(feature = "gpu-acceleration")]
+    {
+        cuda::init_cuda()?;
+    }
+    
+    #[cfg(feature = "mpi")]
+    {
+        distributed::init_mpi()?;
+    }
+    
+    println!("OpenAlgebra v{} initialized", VERSION);
     Ok(())
+}
+
+/// Performance configuration
+pub struct Config {
+    pub num_threads: Option<usize>,
+    pub gpu_enabled: bool,
+    pub memory_limit: Option<usize>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            num_threads: None, // Use all available cores
+            gpu_enabled: cfg!(feature = "gpu-acceleration"),
+            memory_limit: None, // No limit
+        }
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +154,11 @@ mod tests {
     fn test_version() {
         assert!(!VERSION.is_empty());
         assert_eq!(VERSION, "1.0.0");
+    }
+    
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.gpu_enabled, cfg!(feature = "gpu-acceleration"));
     }
 } 

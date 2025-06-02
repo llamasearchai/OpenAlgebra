@@ -1,0 +1,237 @@
+# Multi-stage Dockerfile for OpenAlgebra Complete Application
+# Supports both Rust and C++ components with full optimization
+
+# Stage 1: Build environment setup
+FROM ubuntu:22.04 as builder
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV RUST_VERSION=1.75.0
+ENV CMAKE_VERSION=3.27.0
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libssl-dev \
+    libopenblas-dev \
+    liblapack-dev \
+    libsuitesparse-dev \
+    libmetis-dev \
+    libomp-dev \
+    python3 \
+    python3-pip \
+    python3-dev \
+    clang \
+    llvm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION}
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install additional Rust components
+RUN rustup component add rustfmt clippy
+RUN cargo install cargo-audit cargo-outdated
+
+# Install modern CMake
+RUN wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz \
+    && tar -xzf cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz \
+    && cp -r cmake-${CMAKE_VERSION}-linux-x86_64/* /usr/local/ \
+    && rm -rf cmake-${CMAKE_VERSION}-linux-x86_64*
+
+# Stage 2: Build OpenAlgebra
+FROM builder as openalgebra-builder
+
+WORKDIR /app
+
+# Copy dependency files first for better caching
+COPY Cargo.toml Cargo.lock ./
+COPY CMakeLists.txt ./
+COPY build.rs ./
+
+# Copy source code
+COPY src/ ./src/
+COPY tests/ ./tests/
+COPY benches/ ./benches/
+COPY examples/ ./examples/
+COPY cmake/ ./cmake/
+COPY config/ ./config/
+
+# Build Rust components with optimizations
+RUN cargo build --release --features full
+
+# Build C++ components
+RUN mkdir -p build && cd build \
+    && cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DENABLE_OPENMP=ON \
+        -DENABLE_MKL=OFF \
+        -DENABLE_CUDA=OFF \
+        -DBUILD_TESTING=ON \
+        -GNinja \
+    && ninja -j$(nproc)
+
+# Run tests to ensure everything works
+RUN cargo test --release --features full
+RUN cd build && ctest --parallel $(nproc)
+
+# Stage 3: Python environment
+FROM openalgebra-builder as python-builder
+
+# Install Python dependencies
+COPY requirements.txt requirements-dev.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+
+# Copy Python integration
+COPY python/ ./python/
+
+# Build Python bindings if available
+RUN if [ -f python/setup.py ]; then \
+        cd python && python3 setup.py build_ext --inplace; \
+    fi
+
+# Stage 4: Production image
+FROM ubuntu:22.04 as production
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libopenblas0 \
+    liblapack3 \
+    libsuitesparse-dev \
+    libmetis5 \
+    libomp5 \
+    python3 \
+    python3-pip \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create application user
+RUN useradd -m -u 1000 openalgebra
+USER openalgebra
+WORKDIR /home/openalgebra
+
+# Copy built artifacts
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/target/release/openalgebra-server ./bin/
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/target/release/openalgebra-benchmark ./bin/
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/target/release/libopenalgebra.so ./lib/
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/build/lib* ./lib/
+COPY --from=python-builder --chown=openalgebra:openalgebra /app/python/ ./python/
+
+# Copy configuration files
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/config/ ./config/
+
+# Set up environment
+ENV PATH="/home/openalgebra/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/home/openalgebra/lib:${LD_LIBRARY_PATH}"
+ENV PYTHONPATH="/home/openalgebra/python:${PYTHONPATH}"
+
+# Install Python client
+RUN pip3 install --user -e ./python/
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Expose ports
+EXPOSE 8080 8081 8082
+
+# Default command
+CMD ["openalgebra-server", "--host", "0.0.0.0", "--port", "8080"]
+
+# Stage 5: Development image
+FROM python-builder as development
+
+# Install development tools
+RUN apt-get update && apt-get install -y \
+    gdb \
+    valgrind \
+    perf-tools-unstable \
+    htop \
+    vim \
+    tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install additional Rust tools
+RUN cargo install cargo-watch cargo-expand cargo-flamegraph
+
+# Install Python development tools
+RUN pip3 install --no-cache-dir \
+    jupyter \
+    matplotlib \
+    seaborn \
+    plotly \
+    dash \
+    streamlit
+
+# Set up development environment
+WORKDIR /app
+ENV RUST_BACKTRACE=1
+ENV RUST_LOG=debug
+
+# Development command
+CMD ["bash"]
+
+# Stage 6: Benchmark image
+FROM production as benchmark
+
+# Copy benchmark data and scripts
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/scripts/ ./scripts/
+COPY --from=openalgebra-builder --chown=openalgebra:openalgebra /app/examples/ ./examples/
+
+# Install benchmark dependencies
+USER root
+RUN apt-get update && apt-get install -y \
+    time \
+    bc \
+    gnuplot \
+    && rm -rf /var/lib/apt/lists/*
+
+USER openalgebra
+
+# Benchmark command
+CMD ["openalgebra-benchmark", "--benchmark", "all", "--size", "10000", "--iterations", "5"]
+
+# Stage 7: GPU-enabled image (optional)
+FROM nvidia/cuda:12.0-devel-ubuntu22.04 as gpu-enabled
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    cmake \
+    libopenblas-dev \
+    liblapack-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+COPY . .
+
+# Build with GPU support
+RUN cargo build --release --features gpu-acceleration
+
+# GPU runtime
+FROM nvidia/cuda:12.0-runtime-ubuntu22.04 as gpu-runtime
+
+RUN apt-get update && apt-get install -y \
+    libopenblas0 \
+    liblapack3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gpu-enabled /app/target/release/openalgebra-server /usr/local/bin/
+COPY --from=gpu-enabled /app/target/release/libopenalgebra.so /usr/local/lib/
+
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+
+CMD ["openalgebra-server", "--gpu", "--host", "0.0.0.0"] 

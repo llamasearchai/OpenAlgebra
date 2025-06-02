@@ -25,15 +25,60 @@ name = "openalgebra"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Core dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Numerical computing
+num-traits = "0.2"
+num-complex = "0.4"
+ndarray = { version = "0.15", features = ["serde"] }
+nalgebra = { version = "0.32", features = ["serde-serialize"] }
+rayon = { version = "1.8", optional = true }
+
+# API and web framework
+tokio = { version = "1.0", features = ["full"] }
+axum = { version = "0.7", features = ["json", "multipart"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+hyper = { version = "1.0", features = ["full"] }
+
+# OpenAI SDK integration
+openai_api_rust = "0.1"
+async-openai = "0.17"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
+
+# CLI parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# Testing and benchmarking
+criterion = { version = "0.5", optional = true }
+proptest = { version = "1.0", optional = true }
+
+# GPU acceleration (optional)
+cudarc = { version = "0.9", optional = true }
+
+# MPI support (optional)
+mpi = { version = "0.6", optional = true }
+
+# BLAS/LAPACK support
+blas-src = { version = "0.8", features = ["openblas"] }
+lapack-src = { version = "0.8", features = ["openblas"] }
 
 [features]
-default = []
-gpu-acceleration = []
-mpi = []
+default = ["rayon"]
+gpu-acceleration = ["cudarc"]
+mpi = ["dep:mpi"]
 openmp = []
+benchmarks = ["criterion", "proptest"]
+full = ["gpu-acceleration", "mpi", "openmp", "benchmarks"]
 
 [profile.release]
 opt-level = 3
@@ -46,9 +91,36 @@ strip = true
 opt-level = 1
 debug = true
 
-# macOS specific optimizations
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+
+# Platform-specific dependencies
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
-core-graphics = "0.23"
-cocoa = "0.25"
-objc = "0.2" 
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3", features = ["winnt"] }
+
+[[bin]]
+name = "openalgebra-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "openalgebra-benchmark"
+path = "src/bin/benchmark.rs"
+
+[[bench]]
+name = "sparse_operations"
+harness = false
+required-features = ["benchmarks"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.0"
+approx = "0.5"
+axum-test = "14.0" 
