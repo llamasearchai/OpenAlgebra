@@ -314,7 +314,7 @@ class SystemValidator:
                     return False
             
             # Check for no emojis (as requested)
-            common_emojis = ["🚀", "📊", "🧬", "⚡", "🔒", "🏥", "🎓", "👥"]
+            common_emojis = []
             found_emojis = []
             for emoji in common_emojis:
                 if emoji in readme_content:

@@ -553,7 +553,7 @@ class LoadTestRunner:
         </head>
         <body>
             <div class="header">
-                <h1>🚀 AI Inference Platform Load Test Report</h1>
+                <h1>AI Inference Platform Load Test Report</h1>
                 <p><strong>Test Duration:</strong> {results['config']['duration_seconds']}s</p>
                 <p><strong>Max Concurrent Users:</strong> {results['config']['max_concurrent_users']}</p>
                 <p><strong>Generated:</strong> {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
@@ -571,7 +571,7 @@ class LoadTestRunner:
             </div>
             
             <div class="chart-container">
-                <h3>📊 Performance Metrics Over Time</h3>
+                <h3>Performance Metrics Over Time</h3>
                 <canvas id="performanceChart" width="400" height="200"></canvas>
             </div>
             

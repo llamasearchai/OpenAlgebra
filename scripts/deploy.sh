@@ -541,7 +541,7 @@ main() {
     log "  • Logs: /var/log/openalgebra/"
     log "  • Backups: /opt/openalgebra/backups/"
     log ""
-    log "🔧 Management Commands:"
+    log "Management Commands:"
     log "  • View logs: docker-compose -f $PROJECT_DIR/docker-compose.yml logs -f"
     log "  • Restart services: docker-compose -f $PROJECT_DIR/docker-compose.yml restart"
     log "  • Update deployment: $0 <new-version> $ENVIRONMENT $DOMAIN"

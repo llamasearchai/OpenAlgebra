@@ -176,7 +176,7 @@ class ConsolidatedReportGenerator:
             </div>
 
             <div class="test-scenarios">
-                <h2>🧪 Test Scenario Results</h2>
+                <h2>Test Scenario Results</h2>
                 {self._generate_scenario_results_html()}
             </div>
 
