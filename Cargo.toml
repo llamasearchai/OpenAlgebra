@@ -1,15 +1,15 @@
 [package]
-name = "openalgebra-medical"
+name = "openalgebra"
 version = "1.0.0"
 edition = "2021"
 authors = ["Nik Jois <nikjois@llamasearch.ai>"]
-description = "High-Performance Sparse Linear Algebra for Medical AI Model Development"
+description = "High-Performance Sparse Linear Algebra Library in Rust and C++"
 license = "MIT"
 repository = "https://github.com/llamasearchai/OpenAlgebra"
 homepage = "https://github.com/llamasearchai/OpenAlgebra"
-documentation = "https://docs.rs/openalgebra-medical"
+documentation = "https://docs.rs/openalgebra"
 readme = "README.md"
-keywords = ["medical-ai", "sparse-matrix", "dicom", "machine-learning", "healthcare"]
+keywords = ["sparse-matrix", "linear-algebra", "scientific-computing", "mathematics", "high-performance"]
 categories = ["science", "mathematics"]
 exclude = [
     "tests/*",
@@ -21,7 +21,7 @@ exclude = [
 ]
 
 [lib]
-name = "openalgebra_medical"
+name = "openalgebra"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
@@ -31,10 +31,9 @@ uuid = { version = "1.0", features = ["v4"] }
 
 [features]
 default = []
-medical-io = []
 gpu-acceleration = []
-clinical-validation = []
-federated-learning = []
+mpi = []
+openmp = []
 
 [profile.release]
 opt-level = 3

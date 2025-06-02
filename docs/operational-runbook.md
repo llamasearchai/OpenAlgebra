@@ -1,4 +1,4 @@
-# OpenAlgebra Medical AI - Operational Runbook
+# OpenAlgebra - Operational Runbook
 
 ## Table of Contents
 1. [System Overview](#system-overview)
@@ -7,20 +7,17 @@
 4. [Common Issues & Solutions](#common-issues--solutions)
 5. [Emergency Procedures](#emergency-procedures)
 6. [Maintenance Tasks](#maintenance-tasks)
-7. [Security Procedures](#security-procedures)
-8. [Compliance Checks](#compliance-checks)
 
 ## System Overview
 
-OpenAlgebra Medical AI is a high-performance sparse linear algebra system designed for medical AI applications. The system processes medical imaging data (DICOM, NIfTI) and provides AI-powered analysis for various medical specialties.
+OpenAlgebra is a high-performance sparse linear algebra library written in Rust and C++. The system provides efficient sparse matrix operations, iterative solvers, and tensor computations with optional GPU acceleration.
 
 ### Architecture Components
-- **Core Service**: Rust-based processing engine
-- **API Gateway**: FastAPI endpoints for medical AI services
-- **Database**: PostgreSQL for metadata and results
-- **Cache**: Redis for session management and caching
-- **Object Storage**: MinIO for medical images and models
-- **GPU Compute**: CUDA/Metal acceleration for AI inference
+- **Core Library**: Rust and C++ sparse linear algebra implementations
+- **Python Bindings**: Python interface for integration
+- **CUDA Kernels**: GPU acceleration for supported operations
+- **MPI Support**: Distributed computing capabilities
+- **Test Suite**: Comprehensive automated testing
 
 ## Deployment Procedures
 
@@ -28,48 +25,46 @@ OpenAlgebra Medical AI is a high-performance sparse linear algebra system design
 
 1. **Pre-deployment Checklist**
    ```bash
-   # Verify environment variables
+   # Verify build environment
    ./scripts/check-env.sh
    
-   # Run pre-deployment tests
+   # Run tests
    cargo test --release
-   
-   # Verify HIPAA compliance
-   ./scripts/hipaa-check.sh
+   cd build && ctest
    ```
 
-2. **Deploy with Docker Compose**
+2. **Build and Install**
    ```bash
-   # Production deployment
-   ./scripts/deploy.sh latest production yourdomain.com
+   # Build Rust library
+   cargo build --release
    
-   # Verify deployment
-   curl https://yourdomain.com/health
+   # Build C++ library
+   mkdir build && cd build
+   cmake .. -DCMAKE_BUILD_TYPE=Release
+   make -j$(nproc) && sudo make install
    ```
 
-3. **Post-deployment Verification**
-   - Check all services are running: `docker-compose ps`
-   - Verify API endpoints: `./scripts/smoke-test.sh`
-   - Check logs: `docker-compose logs -f`
+3. **Post-installation Verification**
+   - Run test suite: `cargo test && ctest`
+   - Verify Python bindings: `python -c "import openalgebra"`
+   - Check GPU support: `nvidia-smi` (if CUDA enabled)
 
 ### Rolling Updates
 
 1. **Build new version**
    ```bash
    cargo build --release
-   docker build -t openalgebra/medical-ai:v1.2.3 .
+   cd build && make -j$(nproc)
    ```
 
-2. **Blue-Green Deployment**
+2. **Testing**
    ```bash
-   # Deploy to staging
-   ./scripts/deploy.sh v1.2.3 staging staging.yourdomain.com
+   # Run full test suite
+   cargo test --release
+   cd build && ctest
    
-   # Run integration tests
-   cargo test --features integration
-   
-   # Switch production
-   ./scripts/blue-green-switch.sh production v1.2.3
+   # Run benchmarks
+   cargo bench
    ```
 
 ## Monitoring & Alerts
@@ -77,253 +72,162 @@ OpenAlgebra Medical AI is a high-performance sparse linear algebra system design
 ### Key Metrics to Monitor
 
 1. **System Health**
-   - CPU Usage: Alert if > 80% for 5 minutes
-   - Memory Usage: Alert if > 85% for 5 minutes
-   - Disk Usage: Alert if > 90%
-   - GPU Utilization: Alert if < 30% during processing
+   - CPU Usage: Monitor during intensive computations
+   - Memory Usage: Track for large sparse matrices
+   - GPU Utilization: Monitor CUDA kernel efficiency
 
-2. **Application Metrics**
-   - API Response Time: Alert if p95 > 1s
-   - Error Rate: Alert if > 1% for 5 minutes
-   - Model Accuracy: Alert if < 90%
-   - DICOM Processing Time: Alert if > 10s
-
-3. **Compliance Metrics**
-   - Unanonymized Data: Critical alert if any detected
-   - Audit Log Gaps: Alert if logging fails
-   - Encryption Status: Alert if disabled
+2. **Performance Metrics**
+   - Solver Convergence: Monitor iteration counts
+   - Memory Allocation: Track sparse matrix efficiency
+   - Benchmark Performance: Regression testing
 
 ### Alert Response Procedures
 
-1. **High Error Rate**
+1. **Performance Degradation**
    ```bash
-   # Check recent errors
-   docker-compose logs openalgebra --tail 1000 | grep ERROR
+   # Run performance benchmarks
+   cargo bench
    
-   # Check API health
-   curl localhost:8000/health
-   
-   # Restart if necessary
-   docker-compose restart openalgebra
+   # Check system resources
+   htop
+   nvidia-smi
    ```
 
-2. **Memory Pressure**
+2. **Memory Issues**
    ```bash
    # Check memory usage
-   docker stats
+   ps aux --sort=-%mem | head
    
-   # Clear cache if needed
-   docker-compose exec redis redis-cli FLUSHDB
-   
-   # Scale horizontally
-   docker-compose up -d --scale openalgebra=3
+   # Monitor sparse matrix density
+   # (application-specific debugging)
    ```
 
 ## Common Issues & Solutions
 
-### Issue: DICOM Processing Timeout
+### Issue: Compilation Failures
 
-**Symptoms**: DICOM files taking > 30s to process
-
-**Solution**:
-1. Check file size: `ls -lh /data/dicom/`
-2. Verify GPU acceleration: `nvidia-smi`
-3. Increase timeout: `DICOM_TIMEOUT=60 docker-compose up -d`
-
-### Issue: Model Accuracy Degradation
-
-**Symptoms**: Accuracy drops below 90%
+**Symptoms**: Build errors during compilation
 
 **Solution**:
-1. Check recent model updates: `git log --oneline models/`
-2. Validate test dataset: `cargo test test_model_accuracy`
-3. Rollback if needed: `./scripts/model-rollback.sh previous_version`
+1. Check Rust version: `rustc --version`
+2. Update dependencies: `cargo update`
+3. Check CMake version: `cmake --version`
+4. Verify CUDA toolkit: `nvcc --version`
 
-### Issue: Database Connection Errors
+### Issue: Test Failures
 
-**Symptoms**: "connection refused" errors
+**Symptoms**: Unit or integration tests failing
 
 **Solution**:
-1. Check PostgreSQL status: `docker-compose ps postgres`
-2. Verify connections: `docker-compose exec postgres pg_isready`
-3. Reset connections: `docker-compose restart postgres openalgebra`
+1. Run specific test: `cargo test test_name`
+2. Check test data: Verify test matrices are valid
+3. Debug with: `cargo test -- --nocapture`
+
+### Issue: Performance Regression
+
+**Symptoms**: Slower than expected performance
+
+**Solution**:
+1. Run benchmarks: `cargo bench`
+2. Profile with: `perf record` and `perf report`
+3. Check compiler optimizations: Verify release build
 
 ## Emergency Procedures
 
-### Critical Patient Data Exposure
+### Critical Library Malfunction
 
 1. **Immediate Actions**
    ```bash
-   # Stop all processing
-   docker-compose stop openalgebra openalgebra-gpu
-   
-   # Enable emergency mode
-   echo "EMERGENCY_MODE=true" >> .env
-   docker-compose up -d nginx  # Only static responses
+   # Revert to last known good version
+   git checkout last-stable-tag
+   cargo build --release
    ```
 
 2. **Investigation**
    ```bash
-   # Check access logs
-   grep -E "patient|ssn|name" /var/log/openalgebra/access.log
+   # Check recent changes
+   git log --oneline -10
    
-   # Generate compliance report
-   ./scripts/generate-hipaa-report.sh
+   # Run debugging tests
+   cargo test -- --nocapture
    ```
 
 3. **Recovery**
    ```bash
-   # Clear sensitive data from logs
-   ./scripts/sanitize-logs.sh
+   # Fix issues and test
+   cargo test --release
+   cd build && ctest
    
-   # Re-enable services
-   echo "EMERGENCY_MODE=false" >> .env
-   docker-compose up -d
+   # Update to fixed version
+   git tag stable-vX.Y.Z
    ```
 
-### Complete System Failure
+### Complete Build System Failure
 
-1. **Failover to Backup**
+1. **Fallback Options**
    ```bash
-   # Switch DNS to backup site
-   ./scripts/dns-failover.sh backup.yourdomain.com
-   
-   # Restore from latest backup
-   ./scripts/restore-backup.sh latest
+   # Use pre-built binaries
+   # Or build on alternative system
+   # Document issue for future prevention
    ```
 
 2. **Root Cause Analysis**
-   - Collect all logs: `./scripts/collect-diagnostics.sh`
-   - Review monitoring data from last 24h
-   - Document timeline in incident report
+   - Check build logs
+   - Verify system dependencies
+   - Document timeline and resolution
 
 ## Maintenance Tasks
 
-### Daily Tasks
-- [ ] Check backup completion
-- [ ] Review error logs
-- [ ] Verify DICOM processing queue
-- [ ] Check disk usage
+### Regular Maintenance
 
-### Weekly Tasks
-- [ ] Update virus definitions
-- [ ] Review access logs for anomalies
-- [ ] Test backup restoration
-- [ ] Update SSL certificates if needed
+1. **Weekly Tasks**
+   - Run full test suite
+   - Update dependencies
+   - Review performance metrics
 
-### Monthly Tasks
-- [ ] Security patches
-- [ ] Performance analysis
-- [ ] Compliance audit
-- [ ] Disaster recovery drill
+2. **Monthly Tasks**
+   - Update documentation
+   - Review and merge pull requests
+   - Release new versions if needed
 
-## Security Procedures
+### Dependency Management
 
-### Access Control
-
-1. **Adding New User**
-   ```bash
-   # Generate secure credentials
-   ./scripts/create-user.sh username role
-   
-   # Configure RBAC
-   kubectl apply -f k8s/rbac/user-role.yaml
-   ```
-
-2. **Rotating Secrets**
-   ```bash
-   # Rotate all secrets
-   ./scripts/rotate-secrets.sh
-   
-   # Update applications
-   docker-compose down
-   docker-compose up -d
-   ```
-
-### Security Incident Response
-
-1. **Detection**
-   - Monitor IDS alerts
-   - Check failed login attempts
-   - Review API access patterns
-
-2. **Containment**
-   ```bash
-   # Block suspicious IP
-   iptables -A INPUT -s SUSPICIOUS_IP -j DROP
-   
-   # Revoke compromised tokens
-   ./scripts/revoke-tokens.sh
-   ```
-
-3. **Recovery**
-   - Reset affected credentials
-   - Review and patch vulnerabilities
-   - Update security policies
-
-## Compliance Checks
-
-### HIPAA Compliance
-
-**Daily Checks**:
 ```bash
-# Verify encryption
-./scripts/check-encryption.sh
+# Update Rust dependencies
+cargo update
 
-# Audit data access
-./scripts/audit-access.sh --last 24h
+# Update git submodules (if any)
+git submodule update --init --recursive
 
-# Check anonymization
-./scripts/verify-anonymization.sh
+# Check for security advisories
+cargo audit
 ```
 
-**Monthly Audit**:
-```bash
-# Full compliance scan
-./scripts/hipaa-compliance-scan.sh --full
+### Performance Monitoring
 
-# Generate report
-./scripts/generate-compliance-report.sh --format pdf
+```bash
+# Run benchmark suite
+cargo bench
+
+# Profile critical paths
+perf record --call-graph dwarf ./target/release/benchmark
+perf report
 ```
 
-### FDA 510(k) Preparation
+## Development Workflow
 
-**Validation Procedures**:
-```bash
-# Run clinical validation suite
-cargo test --features clinical_validation
+### Code Review Process
+1. Create feature branch
+2. Implement changes with tests
+3. Run full test suite
+4. Submit pull request
+5. Code review and merge
 
-# Generate validation report
-./scripts/generate-510k-docs.sh
-```
+### Release Process
+1. Update version numbers
+2. Run full test suite
+3. Create release tag
+4. Build and test packages
+5. Publish release
 
-**Documentation Requirements**:
-- Software architecture document
-- Risk analysis (ISO 14971)
-- Clinical validation data
-- User manual
-- Change control procedures
-
-## Contact Information
-
-### Escalation Path
-1. **Level 1**: On-call Engineer - oncall@openalgebra.ai
-2. **Level 2**: Team Lead - teamlead@openalgebra.ai
-3. **Level 3**: CTO - cto@openalgebra.ai
-
-### External Contacts
-- **AWS Support**: [Support Case URL]
-- **Security Team**: security@openalgebra.ai
-- **Compliance Officer**: compliance@openalgebra.ai
-- **Legal Team**: legal@openalgebra.ai
-
-### Vendor Support
-- **NVIDIA GPU Issues**: gpu-support@nvidia.com
-- **PostgreSQL**: enterprise-support@postgresql.org
-- **Docker**: support@docker.com
-
----
-
-Last Updated: 2024-01-15
-Version: 1.0.0
-Next Review: 2024-02-15
+This runbook should be updated as the project evolves and new operational procedures are established.
